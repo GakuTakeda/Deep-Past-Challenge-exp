@@ -19,6 +19,8 @@ from typing import List
 import pandas as pd
 import numpy as np
 import sacrebleu
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
 import torch
 from torch.utils.data import Dataset
@@ -34,20 +36,6 @@ from transformers import (
 from sklearn.model_selection import train_test_split
 
 warnings.filterwarnings("ignore")
-
-
-# ---------------------------
-# Constants
-# ---------------------------
-
-TRAIN_DATA_PATH = "../data/train.csv"
-BASE_MODEL_NAME = "google/byt5-small"
-OUTPUT_DIR = "./exp2/output"
-TASK_PREFIX = "translate Akkadian to English: "
-MAX_SOURCE_LENGTH = 512
-MAX_TARGET_LENGTH = 512
-VAL_RATIO = 0.1
-SEED = 42
 
 
 # ---------------------------
@@ -143,10 +131,10 @@ class VectorizedPostprocessor:
 # ---------------------------
 
 class AkkadianTrainDataset(Dataset):
-    def __init__(self, dataframe: pd.DataFrame, preprocessor, tokenizer, max_source_length, max_target_length):
+    def __init__(self, dataframe: pd.DataFrame, preprocessor, tokenizer, task_prefix, max_source_length, max_target_length):
         raw_texts = dataframe["transliteration"].tolist()
         preprocessed = preprocessor.preprocess_batch(raw_texts)
-        self.input_texts = [TASK_PREFIX + t for t in preprocessed]
+        self.input_texts = [task_prefix + t for t in preprocessed]
         self.target_texts = dataframe["translation"].fillna("").astype(str).tolist()
         self.tokenizer = tokenizer
         self.max_source_length = max_source_length
@@ -253,10 +241,15 @@ def make_compute_metrics(tokenizer, postprocessor):
 # Main
 # ---------------------------
 
-def main():
+@hydra.main(config_path="configs", config_name="train", version_base=None)
+def main(cfg: DictConfig):
+    # Hydraはカレントディレクトリを変更するので、元のディレクトリを保持
+    orig_cwd = hydra.utils.get_original_cwd()
+
     print("=" * 60)
     print("Akkadian Translation - Training (Seq2SeqTrainer)")
     print("=" * 60)
+    print(OmegaConf.to_yaml(cfg))
 
     print(f"PyTorch: {torch.__version__}")
     print(f"CUDA: {torch.cuda.is_available()}")
@@ -266,21 +259,22 @@ def main():
         print(f"GPU Memory: {mem_gb:.2f} GB")
 
     # データ読み込み
-    print(f"Loading data from {TRAIN_DATA_PATH}")
-    df = pd.read_csv(TRAIN_DATA_PATH, encoding="utf-8")
+    train_data_path = os.path.join(orig_cwd, cfg.data.train_path)
+    print(f"Loading data from {train_data_path}")
+    df = pd.read_csv(train_data_path, encoding="utf-8")
     df = df.dropna(subset=["transliteration", "translation"]).reset_index(drop=True)
     print(f"Loaded {len(df)} samples (after dropping NaN)")
 
     # Train / Validation 分割
-    train_df, val_df = train_test_split(df, test_size=VAL_RATIO, random_state=SEED)
+    train_df, val_df = train_test_split(df, test_size=cfg.data.val_ratio, random_state=cfg.training.seed)
     train_df = train_df.reset_index(drop=True)
     val_df = val_df.reset_index(drop=True)
     print(f"Train: {len(train_df)}, Val: {len(val_df)}")
 
     # モデル・トークナイザ読み込み
-    print(f"Loading model: {BASE_MODEL_NAME}")
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME)
-    model = AutoModelForSeq2SeqLM.from_pretrained(BASE_MODEL_NAME)
+    print(f"Loading model: {cfg.model.name}")
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model.name)
+    model = AutoModelForSeq2SeqLM.from_pretrained(cfg.model.name)
 
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Parameters: {num_params:,}")
@@ -291,37 +285,40 @@ def main():
 
     # Dataset
     train_dataset = AkkadianTrainDataset(
-        train_df, preprocessor, tokenizer, MAX_SOURCE_LENGTH, MAX_TARGET_LENGTH
+        train_df, preprocessor, tokenizer, cfg.model.task_prefix,
+        cfg.tokenizer.max_source_length, cfg.tokenizer.max_target_length,
     )
     val_dataset = AkkadianTrainDataset(
-        val_df, preprocessor, tokenizer, MAX_SOURCE_LENGTH, MAX_TARGET_LENGTH
+        val_df, preprocessor, tokenizer, cfg.model.task_prefix,
+        cfg.tokenizer.max_source_length, cfg.tokenizer.max_target_length,
     )
 
     # TrainingArguments
+    output_dir = os.path.join(orig_cwd, cfg.training.output_dir)
     training_args = Seq2SeqTrainingArguments(
-        output_dir=OUTPUT_DIR,
-        num_train_epochs=20,
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=4,
-        gradient_accumulation_steps=8,
-        learning_rate=3e-4,
-        weight_decay=0.01,
-        warmup_ratio=0.1,
-        max_grad_norm=1.0,
-        fp16=False,  # ByT5はfp16非互換（相対位置バイアスがoverflow）
+        output_dir=output_dir,
+        num_train_epochs=cfg.training.num_train_epochs,
+        per_device_train_batch_size=cfg.training.per_device_train_batch_size,
+        per_device_eval_batch_size=cfg.training.per_device_eval_batch_size,
+        gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
+        learning_rate=cfg.training.learning_rate,
+        weight_decay=cfg.training.weight_decay,
+        warmup_ratio=cfg.training.warmup_ratio,
+        max_grad_norm=cfg.training.max_grad_norm,
+        fp16=cfg.training.fp16,  # ByT5はfp16非互換（相対位置バイアスがoverflow）
         predict_with_generate=True,
-        generation_num_beams=4,
-        generation_max_length=MAX_TARGET_LENGTH,
+        generation_num_beams=cfg.training.generation_num_beams,
+        generation_max_length=cfg.tokenizer.max_target_length,
         eval_strategy="epoch",
         save_strategy="epoch",
         logging_strategy="steps",
-        logging_steps=10,
-        save_total_limit=3,
+        logging_steps=cfg.training.logging_steps,
+        save_total_limit=cfg.training.save_total_limit,
         load_best_model_at_end=True,
         metric_for_best_model="score",
         greater_is_better=True,
-        seed=SEED,
-        dataloader_num_workers=2,
+        seed=cfg.training.seed,
+        dataloader_num_workers=cfg.training.dataloader_num_workers,
         dataloader_pin_memory=True,
         report_to="none",
     )
@@ -334,7 +331,7 @@ def main():
         eval_dataset=val_dataset,
         compute_metrics=make_compute_metrics(tokenizer, postprocessor),
         callbacks=[
-            EarlyStoppingCallback(early_stopping_patience=5),
+            EarlyStoppingCallback(early_stopping_patience=cfg.training.early_stopping_patience),
             FixTokenizerCallback(),
         ],
     )
@@ -344,24 +341,15 @@ def main():
     trainer.train()
 
     # Best model を保存
-    best_path = Path(OUTPUT_DIR) / "best_model"
+    best_path = Path(output_dir) / "best_model"
     trainer.save_model(str(best_path))
     tokenizer.save_pretrained(str(best_path))
     fix_tokenizer_config(str(best_path))
     print(f"Best model saved -> {best_path}")
 
-    # 設定をJSON保存
-    config_dict = {
-        "base_model": BASE_MODEL_NAME,
-        "epochs": 20,
-        "batch_size": 4,
-        "gradient_accumulation_steps": 8,
-        "learning_rate": 3e-4,
-        "max_source_length": MAX_SOURCE_LENGTH,
-        "max_target_length": MAX_TARGET_LENGTH,
-        "task_prefix": TASK_PREFIX,
-    }
-    config_path = Path(OUTPUT_DIR) / "train_config.json"
+    # 設定をJSON保存（Hydra configから生成）
+    config_dict = OmegaConf.to_container(cfg, resolve=True)
+    config_path = Path(output_dir) / "train_config.json"
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config_dict, f, indent=2, ensure_ascii=False)
 
