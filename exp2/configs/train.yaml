@@ -1,6 +1,7 @@
 data:
   train_path: "../data/train.csv"
-  val_ratio: 0.1
+  val_ratio: 0.2
+  output_dir: "output"
 
 model:
   name: "google/byt5-small"

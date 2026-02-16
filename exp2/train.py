@@ -34,6 +34,7 @@ from transformers import (
     TrainerCallback,
 )
 from sklearn.model_selection import train_test_split
+from hydra.core.hydra_config import HydraConfig
 
 warnings.filterwarnings("ignore")
 
@@ -213,8 +214,10 @@ def make_compute_metrics(tokenizer, postprocessor):
     def compute_metrics(eval_preds):
         preds, label_ids = eval_preds
 
-        # -100 をpad_token_idに戻す（デコード用）
+        # -100 や範囲外のIDをpad_token_idに戻す（ByT5はchar-basedなので範囲外でcrashする）
         label_ids = np.where(label_ids == -100, tokenizer.pad_token_id, label_ids)
+        preds = np.where(preds < 0, tokenizer.pad_token_id, preds)
+        preds = np.where(preds >= tokenizer.vocab_size, tokenizer.pad_token_id, preds)
 
         # デコード
         decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
@@ -236,10 +239,6 @@ def make_compute_metrics(tokenizer, postprocessor):
 
     return compute_metrics
 
-
-# ---------------------------
-# Main
-# ---------------------------
 
 @hydra.main(config_path="configs", config_name="train", version_base=None)
 def main(cfg: DictConfig):
@@ -294,7 +293,9 @@ def main(cfg: DictConfig):
     )
 
     # TrainingArguments
-    output_dir = os.path.join(orig_cwd, cfg.training.output_dir)
+    # Hydraの出力ディレクトリを使用（outputs/YYYY-MM-DD/HH-MM-SS/）
+    run_dir = Path(HydraConfig.get().runtime.output_dir)
+    output_dir = run_dir / Path(cfg.data.output_dir)
     training_args = Seq2SeqTrainingArguments(
         output_dir=output_dir,
         num_train_epochs=cfg.training.num_train_epochs,
