@@ -1,0 +1,31 @@
+data:
+  test_data_path: "/kaggle/input/deep-past-initiative-machine-translation/test.csv"
+
+model:
+  path: "/home/tkdgk/deep_past_challenge/exp2/outputs/2026-02-16/19-59-39/output/best_model"
+  task_prefix: "translate Akkadian to English: "
+
+processing:
+  max_length: 512
+  batch_size: 8
+  num_workers: 4
+
+generation:
+  num_beams: 8
+  max_new_tokens: 512
+  length_penalty: 1.3
+  early_stopping: true
+  no_repeat_ngram_size: 0
+
+optimizations:
+  use_mixed_precision: true
+  use_better_transformer: true
+  use_bucket_batching: true
+  use_vectorized_postproc: true
+  use_adaptive_beams: true
+  use_auto_batch_size: false
+
+postprocessing:
+  aggressive: true
+  checkpoint_freq: 100
+  num_buckets: 4

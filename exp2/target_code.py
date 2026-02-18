@@ -222,11 +222,11 @@ class UltraInferenceEngine:
     def _load_model(self):
         self.logger.info(f"Loading model from {self.cfg.model.path}")
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = AutoModelForSeq2SeqLM.from_pretrained("/kaggle/input/datasets/takedagaku/exp2-2/home/tkdgk/deep_past_challenge/exp2/checkpoint-880", local_files_only=True)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained("/home/tkdgk/deep_past_challenge/exp2/outputs/2026-02-16/19-59-39/output/best_model", local_files_only=True)
         self.model = self.model.to(self.device)
         self.model = self.model.eval()
 
-        self.tokenizer = AutoTokenizer.from_pretrained("/kaggle/input/datasets/takedagaku/exp2-2/home/tkdgk/deep_past_challenge/exp2/checkpoint-880", local_files_only=True)
+        self.tokenizer = AutoTokenizer.from_pretrained("/home/tkdgk/deep_past_challenge/exp2/outputs/2026-02-16/19-59-39/output/best_model", local_files_only=True)
 
         num_params = sum(p.numel() for p in self.model.parameters())
         self.logger.info(f"Model loaded: {num_params:,} parameters")
@@ -506,7 +506,7 @@ def inspect_results(output_dir: str):
 
 def main(cfg: DictConfig):
     # Hydraの出力ディレクトリを使用
-    output_dir = "/kaggle/working/"
+    output_dir = "./"
 
     print("=" * 60)
     print("Akkadian Translation - Inference")
@@ -519,7 +519,7 @@ def main(cfg: DictConfig):
     print_environment_info()
 
     # テストデータ読み込み
-    test_data_path = "/kaggle/input/deep-past-initiative-machine-translation/test.csv"""
+    test_data_path = "/home/tkdgk/deep_past_challenge/data/test.csv"
     logger.info(f"Loading test data from {test_data_path}")
     test_df = pd.read_csv(test_data_path, encoding="utf-8")
     logger.info(f"Loaded {len(test_df)} test samples")
@@ -537,5 +537,5 @@ def main(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    cfg = OmegaConf.load("/kaggle/input/datasets/takedagaku/exp2-config/inference.yaml")
+    cfg = OmegaConf.load("/home/tkdgk/deep_past_challenge/exp2/configs/inference.yaml")
     main(cfg)
